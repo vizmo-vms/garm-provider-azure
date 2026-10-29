@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - vizmo
   pull_request:
     branches:
       - main
