@@ -115,8 +115,13 @@ func ValidateVnetSubnet(vnetSubnet string) error {
 
 func (c Credentials) GetCredentials() (azcore.TokenCredential, error) {
 	creds := []azcore.TokenCredential{}
-	if spCreds, err := c.SPCredentials.Auth(c.ClientOptions); err == nil {
+	spCreds, err := c.SPCredentials.Auth(c.ClientOptions)
+	if err == nil {
 		creds = append(creds, spCreds)
+	} else if c.SPCredentials.ClientCertificatePath != "" {
+		// A configured certificate that cannot be loaded is a configuration
+		// error, not a reason to silently fall back to managed identity.
+		return nil, fmt.Errorf("service principal certificate: %w", err)
 	}
 
 	// Let's try with Workload Identity first, since this is the preferred method nowadays.
@@ -165,6 +170,11 @@ type ServicePrincipalCredentials struct {
 	TenantID     string `toml:"tenant_id"`
 	ClientID     string `toml:"client_id"`
 	ClientSecret string `toml:"client_secret"`
+	// ClientCertificatePath is a PEM or PKCS#12 file (without a password)
+	// holding the service principal's certificate and private key. Use it
+	// instead of ClientSecret, for example where tenant policy blocks
+	// client secrets.
+	ClientCertificatePath string `toml:"client_certificate_path"`
 }
 
 func (c ServicePrincipalCredentials) Validate() error {
@@ -176,8 +186,12 @@ func (c ServicePrincipalCredentials) Validate() error {
 		return fmt.Errorf("missing client_id")
 	}
 
-	if c.ClientSecret == "" {
-		return fmt.Errorf("missing client_secret")
+	if c.ClientSecret == "" && c.ClientCertificatePath == "" {
+		return fmt.Errorf("missing client_secret or client_certificate_path")
+	}
+
+	if c.ClientSecret != "" && c.ClientCertificatePath != "" {
+		return fmt.Errorf("client_secret and client_certificate_path are mutually exclusive")
 	}
 
 	return nil
@@ -186,6 +200,23 @@ func (c ServicePrincipalCredentials) Validate() error {
 func (c ServicePrincipalCredentials) Auth(opts azcore.ClientOptions) (azcore.TokenCredential, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("validating credentials: %w", err)
+	}
+
+	if c.ClientCertificatePath != "" {
+		data, err := os.ReadFile(c.ClientCertificatePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading client certificate: %w", err)
+		}
+		certs, key, err := azidentity.ParseCertificates(data, nil)
+		if err != nil {
+			return nil, fmt.Errorf("parsing client certificate: %w", err)
+		}
+		o := &azidentity.ClientCertificateCredentialOptions{ClientOptions: opts}
+		cred, err := azidentity.NewClientCertificateCredential(c.TenantID, c.ClientID, certs, key, o)
+		if err != nil {
+			return nil, err
+		}
+		return cred, nil
 	}
 
 	o := &azidentity.ClientSecretCredentialOptions{ClientOptions: opts}

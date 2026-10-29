@@ -53,6 +53,11 @@ subscription_id = "sample_sub_id"
     tenant_id = "sample_tenant_id"
     client_id = "sample_client_id"
     client_secret = "super secret client secret"
+    # Instead of client_secret, a certificate can be used, for example where
+    # tenant policy blocks client secrets. Point this at a PEM (or password-less
+    # PKCS#12) file with the certificate and its private key, such as the file
+    # written by: az ad sp create-for-rbac ... --create-cert
+    # client_certificate_path = "/etc/garm/azure-sp.pem"
 
     # The managed identity token source is always added to the chain of possible authentication
     # sources. The client ID can be overwritten if needed.
